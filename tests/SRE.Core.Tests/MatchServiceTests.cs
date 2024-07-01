@@ -1,12 +1,16 @@
-﻿namespace SRE.Core.Tests
+﻿using Microsoft.Extensions.Time.Testing;
+
+namespace SRE.Core.Tests
 {
     public class MatchServiceTests
     {
-        private IMatchService _matchService;
+        private readonly IMatchService _matchService;
+        private readonly FakeTimeProvider _timeProvider;
 
         public MatchServiceTests()
         {
-            // Arrange
+            _timeProvider = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            _matchService = new MatchService(_timeProvider);
         }
 
         [Fact]
@@ -18,8 +22,16 @@
             Assert.Equal("Uruguay", match.HomeTeam);
             Assert.Equal("Italy", match.AwayTeam);
             Assert.Equal(MatchStatus.InProgress, match.Status);
+            Assert.Equal(_timeProvider.GetUtcNow(), match.StartTime);
             Assert.Equal(0, match.HomeScore);
             Assert.Equal(0, match.AwayScore);
+        }
+
+        [Fact]
+        public void MatchService_StartNewMatch_InvalidTeams_Throws()
+        {
+            Assert.Throws<ArgumentException>(() => _matchService.StartNewMatch("", "Italy"));
+            Assert.Throws<ArgumentException>(() => _matchService.StartNewMatch("Italy", " "));
         }
 
         [Fact]
@@ -81,18 +93,20 @@
             var createdMatch = _matchService.StartNewMatch("Uruguay", "Italy");
             _matchService.CompleteMatch(createdMatch.MatchId);
 
-            Assert.Throws<ArgumentException>(() => _matchService.UpdateScore(createdMatch.MatchId, createdMatch.HomeTeam, 1));
-            Assert.Throws<ArgumentException>(() => _matchService.UpdateScore(createdMatch.MatchId, createdMatch.AwayTeam, 1));
+            Assert.Throws<InvalidOperationException>(() => _matchService.UpdateScore(createdMatch.MatchId, createdMatch.HomeTeam, 1));
+            Assert.Throws<InvalidOperationException>(() => _matchService.UpdateScore(createdMatch.MatchId, createdMatch.AwayTeam, 1));
         }
 
         [Fact]
         public void MatchService_CompleteMatch_Success()
         {
             var createdMatch = _matchService.StartNewMatch("Uruguay", "Italy");
+            _timeProvider.Advance(TimeSpan.FromMinutes(90));
             var completedMatch = _matchService.CompleteMatch(createdMatch.MatchId);
 
             Assert.Equal(MatchStatus.Completed, completedMatch.Status);
             Assert.NotNull(completedMatch.EndTime);
+            Assert.Equal(_timeProvider.GetUtcNow(), completedMatch.EndTime);
         }
 
         [Fact]
@@ -107,7 +121,7 @@
             var createdMatch = _matchService.StartNewMatch("Uruguay", "Italy");
             _matchService.CompleteMatch(createdMatch.MatchId);
 
-            Assert.Throws<ArgumentException>(() => _matchService.CompleteMatch(createdMatch.MatchId));
+            Assert.Throws<InvalidOperationException>(() => _matchService.CompleteMatch(createdMatch.MatchId));
         }
 
         [Fact]
@@ -160,10 +174,11 @@
         }
 
         [Fact]
-        public void MatchService_GetMatches_CorrectOrder()
+        public void MatchService_GetMatches_CorrectOrder_Success()
         {
             Match SetupMatch(string homeTeam, string awayTeam, int homeScore, int awayScore)
             {
+                _timeProvider.Advance(TimeSpan.FromMinutes(1));
                 var match = _matchService.StartNewMatch(homeTeam, awayTeam);
                 match = _matchService.UpdateScore(match.MatchId, match.HomeTeam, homeScore);
                 match = _matchService.UpdateScore(match.MatchId, match.AwayTeam, awayScore);
@@ -185,6 +200,59 @@
                 m => Assert.Equal(match1, m),
                 m => Assert.Equal(match5, m),
                 m => Assert.Equal(match3, m));
+        }
+
+        [Fact]
+        public void MatchService_GetMatches_WithLimit_Success()
+        {
+            _matchService.StartNewMatch("Mexico", "Canada");
+            _matchService.StartNewMatch("Spain", "Brazil");
+            _matchService.StartNewMatch("Germany", "France");
+            _matchService.StartNewMatch("Uruguay", "Italy");
+            _matchService.StartNewMatch("Argentina", "Australia");
+
+            var matches = _matchService.GetScoreBoard(3);
+
+            Assert.Equal(3, matches.Count);
+        }
+
+        [Fact]
+        public void MatchService_GetMatches_WithInvalidLimit_Throws()
+        {
+            _matchService.StartNewMatch("Mexico", "Canada");
+            _matchService.StartNewMatch("Spain", "Brazil");
+            _matchService.StartNewMatch("Germany", "France");
+            _matchService.StartNewMatch("Uruguay", "Italy");
+            _matchService.StartNewMatch("Argentina", "Australia");
+
+            Assert.Throws<ArgumentException>(() => _matchService.GetScoreBoard(-1));
+            Assert.Throws<ArgumentException>(() => _matchService.GetScoreBoard(0));
+        }
+
+        [Fact]
+        public void MatchService_DeleteMatch_Success()
+        {
+            var createdMatch = _matchService.StartNewMatch("Uruguay", "Italy");
+            _matchService.DeleteMatch(createdMatch.MatchId);
+
+            Assert.Throws<ArgumentException>(() => _matchService.GetMatch(createdMatch.MatchId));
+        }
+
+        [Fact]
+        public void MatchService_DeleteMatch_CompletedMatch_Success()
+        {
+            var createdMatch = _matchService.StartNewMatch("Uruguay", "Italy");
+            _matchService.CompleteMatch(createdMatch.MatchId);
+            _matchService.DeleteMatch(createdMatch.MatchId);
+
+            Assert.Throws<ArgumentException>(() => _matchService.GetMatch(createdMatch.MatchId));
+        }
+
+        [Fact]
+        public void MatchService_DeleteMatch_AlreadyDeleted_Success()
+        {
+            var createdMatch = _matchService.StartNewMatch("Uruguay", "Italy");
+            _matchService.DeleteMatch(createdMatch.MatchId);
         }
     }
 }

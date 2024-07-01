@@ -8,7 +8,7 @@
         public int HomeScore { get; init; }
         public int AwayScore { get; init; }
         public MatchStatus Status { get; init; }
-        public DateTime StartTime { get; init; }
-        public DateTime? EndTime { get; init; }
+        public DateTimeOffset StartTime { get; init; }
+        public DateTimeOffset? EndTime { get; init; }
     }
 }
